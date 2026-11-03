@@ -63,8 +63,87 @@ STEPS = [("1", "Pick a mod for new edits",
 
 PROFILE_HELP = ("A profile is a modpack: which mods are switched on and their load order. Each profile keeps its "
                 "own, like the profiles of Mod Organizer for Skyrim; the mods themselves are shared, so switching is "
-                "instant. The game gets the profile's mods when you press Install. A profile can also keep its own "
-                "saves (Profile ▾ › Separate saves).")
+                "instant. A <b>separate project</b> profile starts from the plain game instead and sees only its own "
+                "mods (Profile ▾ › Import mods from another profile copies some in). The game gets the profile's mods "
+                "when you press Install. A profile can also keep its own saves (Profile ▾ › Separate saves).")
+
+
+class NewProfileDialog(QDialog):
+    def __init__(self, parent=None):
+        from PyQt6.QtWidgets import QRadioButton
+        super().__init__(parent)
+        self.setWindowTitle("New profile")
+        v = QVBoxLayout(self)
+        f = QFormLayout()
+        self.name = QLineEdit()
+        f.addRow("Name", self.name)
+        v.addLayout(f)
+        self.isolated = QRadioButton("A separate project: start from the plain game")
+        hint1 = QLabel("Sees only its own mods: the mods of your other profiles stay out of its lists, its new ids "
+                       "(classes, characters, sprites…) and its Install. Bring some over later with Profile ▾ › "
+                       "Import mods from another profile (copies).")
+        self.shared = QRadioButton("A modpack of the shared mods")
+        hint2 = QLabel("The mods you have now, none switched on yet: pick which ones this modpack uses.")
+        for w in (hint1, hint2):
+            w.setWordWrap(True)
+            w.setStyleSheet("color: gray; margin-left: 22px;")
+        self.isolated.setChecked(True)
+        for w in (self.isolated, hint1, self.shared, hint2):
+            v.addWidget(w)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+        self.resize(460, 0)
+
+
+class ImportProfileDialog(QDialog):
+    """tick mods of the other profiles: copies of them come into this one"""
+
+    def __init__(self, parent, groups, profile):
+        super().__init__(parent)
+        self.setWindowTitle("Import mods from another profile")
+        v = QVBoxLayout(self)
+        lab = QLabel(f"Tick the mods to copy into <b>{profile.name}</b>. Each comes in as a copy, like a shared mod "
+                     "you import: ids that clash with this profile's mods are moved.")
+        lab.setWordWrap(True)
+        v.addWidget(lab)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        for p, mods in groups:
+            top = QTreeWidgetItem([p.name + ("   (separate project)" if p.isolated else "   (shared mods)")])
+            top.setFlags(top.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable)
+            top.setCheckState(0, Qt.CheckState.Unchecked)
+            on = set(p.load_order())
+            for m in mods:
+                it = QTreeWidgetItem([f"{m.name}   v{m.meta.get('version', '')}" + ("" if m.id in on else
+                                                                                    "   (switched off there)")])
+                it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                it.setCheckState(0, Qt.CheckState.Unchecked)
+                it.setData(0, ROLE, m)
+                it.setToolTip(0, m.meta.get("description") or "")
+                top.addChild(it)
+            self.tree.addTopLevelItem(top)
+        self.tree.expandAll()
+        v.addWidget(self.tree)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("Copy in")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+        self.resize(520, 460)
+
+    def chosen(self):
+        out, seen = [], set()
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            for k in range(top.childCount()):
+                it = top.child(k)
+                m = it.data(0, ROLE)
+                if it.checkState(0) == Qt.CheckState.Checked and m.id not in seen:
+                    seen.add(m.id)
+                    out.append(m)
+        return out
 
 
 class HomePage(QWidget):
@@ -124,6 +203,7 @@ class HomePage(QWidget):
         pm = QPushButton("Profile ▾")
         menu = QMenu(pm)
         menu.addAction("Copy this profile…", lambda: self.new_profile(copy=True))
+        menu.addAction("Import mods from another profile…", self.import_from_profile)
         menu.addAction("Rename…", self.rename_profile)
         menu.addAction("Delete…", self.delete_profile)
         menu.addSeparator()
@@ -338,13 +418,16 @@ class HomePage(QWidget):
         self.profile_box.blockSignals(True)
         self.profile_box.clear()
         for p in ps.all():
-            self.profile_box.addItem(p.name + ("   (own saves)" if p.separate_saves else ""), p.id)
+            self.profile_box.addItem(p.name + ("   (separate project)" if p.isolated else "") +
+                                     ("   (own saves)" if p.separate_saves else ""), p.id)
         self.profile_box.setCurrentIndex(max(0, self.profile_box.findData(cur.id)))
         self.profile_box.blockSignals(False)
         self.act_saves.setChecked(cur.separate_saves)
         inst = self.ws.installed_profile()
         n = len(self.ws.mods.load_order())
         note = f"{n} mod(s) switched on in this profile."
+        if cur.isolated:
+            note += "  A separate project: only its own mods (Profile › Import mods from another profile copies some in)."
         if inst and inst.id != cur.id:
             note += f"  The game has the profile <b>{inst.name}</b> installed: Install puts this one in."
         elif inst:
@@ -358,17 +441,54 @@ class HomePage(QWidget):
 
     def new_profile(self, copy=False):
         cur = self.ws.profile
-        name, ok = QInputDialog.getText(self, "Copy profile" if copy else "New profile",
-                                        (f"A copy of '{cur.name}' (the same mods switched on, in the same order). "
-                                         if copy else "A new modpack with no mod switched on yet. ") +
-                                        "\n\nName of the profile:", text=f"{cur.name} copy" if copy else "")
+        if copy:
+            name, ok = QInputDialog.getText(self, "Copy profile",
+                                            f"A copy of '{cur.name}' (the same mods switched on, in the same order)."
+                                            "\n\nName of the profile:", text=f"{cur.name} copy")
+            isolated = False
+        else:
+            dlg = NewProfileDialog(self)
+            ok = dlg.exec() == QDialog.DialogCode.Accepted
+            name, isolated = dlg.name.text(), dlg.isolated.isChecked()
         if not ok or not name.strip():
             return
         try:
-            p = self.ws.mods.profiles.create(name.strip(), copy_from=cur if copy else None)
+            p = self.ws.mods.profiles.create(name.strip(), copy_from=cur if copy else None, isolated=isolated)
         except ValueError as e:
             return QMessageBox.warning(self, "Profile", str(e))
         self.ws.set_profile(p.id)
+
+    def import_from_profile(self):
+        """copies of mods of the other profiles in this one (ids that clash with this profile's mods are moved)"""
+        groups = self.ws.mods.other_profiles_mods()
+        if not groups:
+            return QMessageBox.information(self, "Import from another profile",
+                                           "This profile already sees every mod of the other profiles.")
+        dlg = ImportProfileDialog(self, groups, self.ws.profile)
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.chosen():
+            return
+        from PyQt6.QtWidgets import QApplication
+        from d5lib import modshare
+        done, failed = [], []
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for mod in dlg.chosen():
+                try:
+                    res = modshare.copy_to_profile(mod, self.ws.mods.mods_dir, self.ws.fs,
+                                                   os.path.join(os.path.dirname(self.ws.mods.mods_dir), "state"),
+                                                   log=self.ws.log)
+                    done.append(mod.name + (" (some ids moved)" if res.get("moved") else ""))
+                except Exception as e:
+                    failed.append(f"{mod.name}: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.ws.mods_changed.emit()
+        msg = (f"Copied into '{self.ws.profile.name}':\n  " + "\n  ".join(done)) if done else "Nothing copied."
+        if failed:
+            msg += "\n\nNot copied:\n  " + "\n  ".join(failed)
+        msg += ("\n\nThey are copies: changing them here doesn't change the other profile's."
+                if done and self.ws.profile.isolated else "")
+        (QMessageBox.warning if failed else QMessageBox.information)(self, "Import from another profile", msg)
 
     def rename_profile(self):
         cur = self.ws.profile
@@ -389,9 +509,11 @@ class HomePage(QWidget):
         if not others:
             return QMessageBox.information(self, "Profile", "This is your only profile: make another one first.")
         extra = "  Its own saves are kept too." if ps.has_own_saves(cur) else ""
+        what = (f"It is a separate project: its {len(self.ws.mods.all_mods())} mod(s) go with it. Both are kept in "
+                if cur.isolated else "Only the profile goes (which mods it switches on); the mods stay in the kit. "
+                "It is kept in ")
         if QMessageBox.question(self, "Delete profile",
-                                f"Delete the profile '{cur.name}'?\n\nOnly the profile goes (which mods it switches "
-                                f"on); the mods stay in the kit. It is kept in D5ModKit/state/deleted_profiles in "
+                                f"Delete the profile '{cur.name}'?\n\n{what}D5ModKit/state/deleted_profiles in "
                                 f"case you want it back.{extra}") != QMessageBox.StandardButton.Yes:
             return
         try:

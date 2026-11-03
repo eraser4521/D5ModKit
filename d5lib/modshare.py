@@ -58,12 +58,12 @@ def ensure_uid(mod):
     return mod.meta["uid"]
 
 
-def export_package(mod, path, version=None, author=None):
+def export_package(mod, path, version=None, author=None, copy=False):
     """zip the mod for sharing (mod.json gets a uid; version / author if given).  -> path
     A mod imported here whose ids were moved (local_ids) is not shared again under its identity: its files carry this
     PC's ids, which would not match the original's on a third PC.  Share the original package, or make your own
-    version (derive) and share that."""
-    if mod.meta.get("local_ids"):
+    version (derive) and share that.  copy: for another profile of this PC (copy_to_profile), no such check."""
+    if mod.meta.get("local_ids") and not copy:
         raise ValueError(f"'{mod.name}' came from someone else and some of its ids were moved on this PC, so it can't "
                          "be shared again as the same mod. Share their original package instead, or right-click › "
                          "Make my own version and share that.")
@@ -73,7 +73,7 @@ def export_package(mod, path, version=None, author=None):
     if author:
         mod.meta["author"] = author
     mod.save_meta()
-    meta = {k: v for k, v in mod.meta.items() if k != "local_ids"}
+    meta = {k: v for k, v in mod.meta.items() if k not in ("local_ids", "profile")}
     meta["exported"] = time.strftime("%Y-%m-%d %H:%M")
     tmp = path + ".part"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -498,6 +498,17 @@ def _rename(mod, handler, pattern, fn, group=2):
         os.replace(os.path.join(d, t), os.path.join(d, b))
 
 
+def copy_to_profile(mod, mods_dir, fs, state_dir, log=print):
+    """Import from another profile: a copy of `mod` (a mod the active profile doesn't see) in the active profile, as a
+    shared package comes in: ids that clash with this profile's mods are moved.  -> import_package's dict"""
+    work = tempfile.mkdtemp(prefix="d5copy_")
+    try:
+        pkg = export_package(mod, os.path.join(work, f"{mod.id}.zip"), copy=True)
+        return import_package(pkg, mods_dir, fs, state_dir, log=log)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 # ------------------------------------------------------------------------------------------------ import
 def read_package(path):
     """(top folder name, mod.json dict) of a package zip, after every safety check (modindex.check_zip: one mod
@@ -528,7 +539,7 @@ def import_package(path, mods_dir, fs, state_dir, log=print):
         pkg.meta.pop("local_ids", None)
         if local:
             pkg.meta["local_ids"] = local
-        pkg.save_meta()
+        mm.adopt(pkg)                       # the profile the kit works on owns it (a separate one), or it is shared
         backup = None
         enabled = mm.load_order()
         if old is not None:

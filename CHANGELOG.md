@@ -1,5 +1,30 @@
 # D5 Mod Kit — changes
 
+## 1.5.9 (2026-11-02)
+
+**Characters & Classes**
+* **New monster (and class) invisible in battle, a tiny Prinny when hit, then a crash: fixed (Steam).** Once a new
+  class needs a class slot of its own (the 13th new monster, or the 10th new human class, or any monster family
+  past the game's spare rows), the Steam version's install left out the whole new-class game patch (only a warning
+  in the install log). The game then didn't treat the class as a generic class: the unit showed only its
+  base-panel picture, was invisible on the field and fell apart when hit. Seen in game on the old install and
+  fixed on the new one (a new monster in its own slot stands, idles, takes hits and counters).
+
+**Profiles**
+* **Separate projects.** Profile ▾ › New profile… can start a profile from the plain game: it sees only its own
+  mods (the mods of your other profiles stay out of its lists, its Install and its new ids: classes, characters,
+  sprites … are picked among its own mods only), and remembers its own "New edits go to" mod. The old kind, a
+  modpack of the shared mods, is still there.
+* **Profile ▾ › Import mods from another profile…**: tick mods of your other profiles to copy them in. They come
+  in like a shared mod you import: ids that clash with this profile's mods are moved, and importing again updates
+  the copy. Deleting a separate project puts its mods into `state/deleted_profiles` with it.
+
+**Stages & Maps**
+* **From the game… now gives a whole block skin.** A Netherworld ground is two pictures: the top (with its outline
+  pieces) and the side texture made for it (`NNN_amap_02`). Picking one puts the top with its outline on the
+  block's top and its own side texture on the walls; the walls were a stretched or cut piece of the top before. The
+  gallery shows each ground's top over its side.
+
 ## 1.5.8 (2026-10-21)
 
 **Stages & Maps**

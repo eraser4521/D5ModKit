@@ -231,10 +231,17 @@ class ModManager:
         if c is not None and key is not None and c[0] == key and now - c[1] < 1.0:
             return c[2]
         metas = {}
+        own = self.profile.id if self.profile.isolated else None
+        separate = self.profiles.isolated_ids()
         for d in sorted(os.listdir(self.mods_dir)):
             full = os.path.join(self.mods_dir, d)
             if os.path.isdir(full):
-                metas[d] = Mod(full).meta
+                meta = Mod(full).meta
+                owner = meta.get("profile")
+                # a separate profile: its own mods only; the others: the shared ones (no owner, or its profile is
+                # gone or shares again)
+                if (owner == own) if own else (owner not in separate):
+                    metas[d] = meta
         if os.path.exists(self.order_file):
             with open(self.order_file, encoding="utf-8") as f:
                 order = json.load(f)
@@ -259,6 +266,34 @@ class ModManager:
         full = os.path.join(self.mods_dir, mod_id)
         return Mod(full) if os.path.isdir(full) else None
 
+    def visible(self, mod_id):
+        """the mod is one of this profile's (a separate profile sees only its own)"""
+        return bool(mod_id) and mod_id in self._snapshot()[0]
+
+    def adopt(self, mod):
+        """a mod made / brought in now belongs to this profile (a separate one), or is shared"""
+        if self.profile.isolated:
+            mod.meta["profile"] = self.profile.id
+        else:
+            mod.meta.pop("profile", None)
+        mod.save_meta()
+        return mod
+
+    def other_profiles_mods(self):
+        """[(Profile, [Mod])]: the mods the other profiles see that this one doesn't (Import from another profile)"""
+        out = []
+        mine = set(self._snapshot()[0])
+        for p in self.profiles.all():
+            if p.id == self.profile.id:
+                continue
+            o = ModManager.__new__(ModManager)
+            o.kit_dir, o.mods_dir, o.profiles, o._cache = self.kit_dir, self.mods_dir, self.profiles, None
+            o.profile, o.order_file = p, p.order_file
+            mods = [m for m in o.all_mods() if m.id not in mine]
+            if mods:
+                out.append((p, sorted(mods, key=lambda m: m.name.lower())))
+        return out
+
     def create(self, name, author="", description=""):
         base = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name).strip().replace(" ", "_") or "mod"
         folder = os.path.join(self.mods_dir, base)
@@ -268,6 +303,8 @@ class ModManager:
             i += 1
         m = Mod(folder)
         m.meta.update({"name": name, "author": author, "description": description})
+        if self.profile.isolated:
+            m.meta["profile"] = self.profile.id
         m.save_meta()
         os.makedirs(m.files_dir, exist_ok=True)
         order = self.load_order()

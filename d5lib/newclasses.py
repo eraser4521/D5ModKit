@@ -919,13 +919,13 @@ def _mon_stub(r1, mem, mid, back):
     lines += [f"    mov {r1}, -1", f"    cmp {r1}, 0x122", "    jmp g_out",
               "g_yes:", f"    xor {r1}, {r1}", f"    cmp {r1}, 0x122",
               "g_out:", f"    lea {r1}, {mem}"]             # the value it had (lea keeps the flags)
-    lines += [f"    {x}" for x in mid] + [f"    jmp {back:#x}"]
+    lines += [f"    {x}" for x in mid] + [f"    jmp {back}"]     # decimal: already this build's address
     return chr(10).join(lines)
 
 
 def _hum_stub(r1, mem, mid, back):
     return chr(10).join([f"    lea {r1}, {mem}", f"    cmp {r1}, {GEN_HUM_SPAN:#x}"] + [f"    {x}" for x in mid]
-                        + [f"    jmp {back:#x}"])
+                        + [f"    jmp {back}"])
 
 
 def generic_patch(exe, taken=()):
@@ -938,7 +938,8 @@ def generic_patch(exe, taken=()):
     for off in hum_imm:
         out[off:off + 4] = GEN_HUM_SPAN.to_bytes(4, "little")
     pe = pefile.PE(data=exe, fast_load=True)
-    busy = [(va, va + n) for va, n in taken]
+    here = [(int(va) if isinstance(va, exemap.Native) else exemap.ACTIVE(va), n) for va, n in taken]   # this build's
+    busy = [(va, va + n) for va, n in here]
     hooks = []
     for kind, lst in (("mon", mon), ("hum", hum_reg)):
         for va, n, r1, mem, mid, back in lst:
@@ -946,7 +947,8 @@ def generic_patch(exe, taken=()):
                 continue
             off = pe.get_offset_from_rva(va - IMAGE_BASE)
             src = (_mon_stub if kind == "mon" else _hum_stub)(r1, mem, mid, back)
-            hooks.append((va, bytes(exe[off:off + n]), src, 0xE9))
+            # the sites are this exe's own addresses (the Steam build's on Steam): not translated again
+            hooks.append((exemap.Native(va), bytes(exe[off:off + n]), src, 0xE9))
             busy.append((va, va + n))
     return bytes(out), hooks, (len(mon), len(hum_reg), len(hum_imm))
 

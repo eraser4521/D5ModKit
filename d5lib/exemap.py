@@ -377,6 +377,10 @@ class Unmapped(KeyError):
     """a game address the kit uses that this build of the game doesn't have (the feature can't be installed)"""
 
 
+class Native(int):
+    """an address already in the build being patched (a site found by scanning that exe): site() takes it as it is"""
+
+
 class Translator:
     """old (known build) va -> this build's va.  identity for the known build; else the shipped map
     (data/exe_map_<sha1[:12]>.json, made by tools/exe_port.py and checked) or one found by locate()"""
@@ -545,6 +549,10 @@ def same_code(t, old_va, orig, new_va, new_bytes):
 def site(pe, va, orig, what="patch site"):
     """the translated address of a hook site whose original instructions are `orig` (checked) -> new va"""
     t = ACTIVE
+    if isinstance(va, Native):
+        if pe.get_data(int(va) - IMAGE_BASE, len(orig)) != bytes(orig):
+            raise ValueError(f"unexpected exe version: {what} {int(va):#x} doesn't match")
+        return int(va)
     nva = t(va)
     cur = pe.get_data(nva - IMAGE_BASE, len(orig))
     if not same_code(t, va, orig, nva, cur):

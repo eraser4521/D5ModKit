@@ -75,7 +75,7 @@ class Workspace(QObject):
                 self.save_settings()
         self.mods = modsys.ModManager(KIT_DIR, self.settings.get("profile"))
         self._open_game()
-        self.active_mod = self.mods.get(self.settings.get("active_mod") or "") if self.settings.get("active_mod") else None
+        self.active_mod = self._profile_active_mod()
 
     # ------------------------------------------------------------------ setup
     def _open_game(self):
@@ -127,7 +127,17 @@ class Workspace(QObject):
         self.save_settings()
         self.mods.set_profile(pid)
         self.log(f"Profile: {self.mods.profile.name}")
+        mod = self._profile_active_mod()                # each profile has its own mod being edited
+        if (mod.id if mod else None) != (self.active_mod.id if self.active_mod else None):
+            self.set_active_mod(mod)
         self.mods_changed.emit()
+
+    def _profile_active_mod(self):
+        """the mod this profile was editing (a separate profile: one of its own)"""
+        per = self.settings.get("active_mods") or {}
+        pid = self.mods.profile.id
+        mid = per[pid] if pid in per else self.settings.get("active_mod")
+        return self.mods.get(mid) if mid and self.mods.visible(mid) else None
 
     def installed_profile(self):
         """the profile whose mods are in this game folder (None: the original game, or installed before profiles)"""
@@ -158,6 +168,7 @@ class Workspace(QObject):
     def set_active_mod(self, mod):
         self.active_mod = mod
         self.settings["active_mod"] = mod.id if mod else None
+        self.settings.setdefault("active_mods", {})[self.mods.profile.id] = mod.id if mod else None
         self.save_settings()
         self.active_mod_changed.emit(mod)
 
