@@ -241,9 +241,14 @@ def _free(kind, i, taken, fs, van, limit=None):
                 return c
         raise RuntimeError("no free character id below 1000")
     if kind == "sprite":
+        # a sprite number and its portrait (number + 10000) share one file name space, so a moved sprite must stay
+        # below 10000: above it, its files would take the names of other characters' portraits
         n = 9000
-        while n in taken or n + 10000 > 32767:
+        while n in taken:
             n += 10
+        if n > 9990:
+            raise RuntimeError("no free sprite numbers left for this mod (9000-9990 are all in use): "
+                               "switch off or remove a mod that brings its own sprites, then import again")
         return n
     if kind == "event":
         b = MOD_CHOREO_BASE
@@ -385,11 +390,21 @@ def apply(mod, mapping, log=print, vanilla_char=None):
                 moves.append((f, n, new, (m.group(1) or "")))
         tmp = []
         for f, n, new, folder in moves:
-            a = anm.parse(mod.read_file(f))
+            raw = mod.read_file(f)
+            # a mod may store its sprite files LZS-compressed (the game's own packing): unpack to renumber, pack again
+            packed = raw[:4] in (b"dat\0", b"pac\0") and int.from_bytes(raw[4:8], "little") != len(raw)
+            if packed:
+                from . import lzs
+                a = anm.parse(lzs.decompress(raw))
+            else:
+                a = anm.parse(raw)
             for blk in a.blocks:
                 if blk.id == n or _spr(S, blk.id) != blk.id:
                     blk.id = _spr(S, blk.id)
-            tmp.append((f"{folder}anm{new:05d}.lzs", a.to_bytes()))
+            out = a.to_bytes()
+            if packed:
+                out = anm.lzs_compress(out, raw[:4])
+            tmp.append((f"{folder}anm{new:05d}.lzs", out))
             mod.remove_file(f)
         for vp, data in tmp:
             mod.write_file(vp, data)
