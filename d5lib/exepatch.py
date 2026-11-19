@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover
 
 IMAGE_BASE = 0x140000000
 SECTION_NAME = b".d5mod"
+KIT_SECTION_PREFIX = b".d5"        # every section the kit appends to the exe
 
 OPEN_VA = 0x140263875
 OPEN_ORIG = bytes.fromhex("488d8b98bd0000c783c8bd000001000000")
@@ -108,7 +109,7 @@ def add_hook_section(exe: bytes, name: bytes, hooks, shared_src="", writable=Fal
     sh_base = fh + 20 + pe.FILE_HEADER.SizeOfOptionalHeader
     # The exe has room for only a few more section headers: when the last section is already one of the kit's code
     # sections (and ends the file), the new code is appended to it instead of getting a header of its own.
-    grow = (last.Name.startswith(b".d5") and last.Characteristics & 0x20000000
+    grow = (last.Name.startswith(KIT_SECTION_PREFIX) and last.Characteristics & 0x20000000
             and last.PointerToRawData + last.SizeOfRawData == len(exe))
     if grow:
         offset = (last.Misc_VirtualSize + 15) // 16 * 16
@@ -235,7 +236,8 @@ def build_outfit_patch(exe: bytes, records, label_id: int, help_id: int, own_spr
     for va, orig in ((OPEN_VA, OPEN_ORIG), (DISPATCH_VA, DISPATCH_ORIG), (HUB_VA, HUB_ORIG),
                      (LAYER_VA, LAYER_ORIG), (FACE_A_VA, FACE_A_ORIG), (FACE_B_VA, FACE_B_ORIG),
                      (GFX_VA, GFX_ORIG)):
-        at[va] = exemap.site(pe, va, orig, "outfit menu patch site")
+        # checked here, claimed where written (below): the face, layer and gfx hooks are only written when needed
+        at[va] = exemap.site(pe, va, orig, "outfit menu patch site", claim=False)
 
     sec_align = pe.OPTIONAL_HEADER.SectionAlignment
     file_align = pe.OPTIONAL_HEADER.FileAlignment
@@ -750,6 +752,7 @@ def build_outfit_patch(exe: bytes, records, label_id: int, help_id: int, own_spr
         out[off:off + len(b)] = b
 
     def hook(va, label, orig):
+        exemap.claim(at[va], len(orig), "outfit menu patch site")
         put(at[va], _jmp(at[va], labels[label], len(orig)))
 
     hook(DISPATCH_VA, "dispatch", DISPATCH_ORIG)
